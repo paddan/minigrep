@@ -5,12 +5,12 @@ use regex::Regex;
 use std::error::Error;
 use std::fs::File;
 
-pub fn grep(args: Args) -> Result<(), Box<dyn Error>> {
+pub fn grep(args: Args) -> Result<Vec<String>, Box<dyn Error>> {
     let file = File::open(args.file_path)?;
     let mmap = unsafe { MmapOptions::new().map(&file)? };
     let content = unsafe { std::str::from_utf8_unchecked(&mmap) };
 
-    let results = if args.use_regex {
+    return Ok(if args.use_regex {
         if args.ignore_case {
             search_regex_case_insensitive_parallel(&args.query, content)
         } else {
@@ -22,16 +22,9 @@ pub fn grep(args: Args) -> Result<(), Box<dyn Error>> {
         } else {
             search_parallel(&args.query, content)
         }
-    };
-
-    for line in results {
-        println!("{line}");
-    }
-
-    Ok(())
+    });
 }
 
-// Simple search functions
 fn search_parallel(query: &str, contents: &str) -> Vec<String> {
     contents
         .par_lines()
@@ -49,7 +42,6 @@ fn search_case_insensitive_parallel(query: &str, contents: &str) -> Vec<String> 
         .collect()
 }
 
-// Regex search functions
 fn search_regex_parallel(query: &str, contents: &str) -> Vec<String> {
     let regex = Regex::new(query).unwrap();
     contents
@@ -73,72 +65,108 @@ fn search_regex_case_insensitive_parallel(query: &str, contents: &str) -> Vec<St
 mod tests {
     use super::*;
 
-    static CONTENTS: &str = r#"
-Rust:
-safe, fast, productive.
-Pick three
-Duct tape
-Trust me
-"#;
-
     #[test]
     fn case_sensitive() {
-        let query = "Duct";
-        assert_eq!(vec!["Duct tape"], search_parallel(query, CONTENTS));
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from("How"),
+            ignore_case: false,
+            use_regex: false,
+        };
+
+        assert_eq!(
+            vec!["How dreary to be somebody!", "How public, like a frog"],
+            grep(args).unwrap()
+        );
     }
 
     #[test]
     fn case_insensitive() {
-        let query = "rUsT";
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from("how"),
+            ignore_case: true,
+            use_regex: false,
+        };
+
         assert_eq!(
-            vec!["Rust:", "Trust me"],
-            search_case_insensitive_parallel(query, CONTENTS)
+            vec!["How dreary to be somebody!", "How public, like a frog"],
+            grep(args).unwrap()
         );
     }
 
     // Test for basic regex matching
     #[test]
     fn regex_basic_search() {
-        let query = r"safe, fast, \w+."; // Matches "safe, fast, productive."
-        assert_eq!(
-            vec!["safe, fast, productive."],
-            search_regex_parallel(query, CONTENTS)
-        );
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from(r" to\b"),
+            ignore_case: false,
+            use_regex: true,
+        };
+
+        assert_eq!(vec!["How dreary to be somebody!"], grep(args).unwrap());
     }
 
     // Test for regex that includes a group and special characters
     #[test]
     fn regex_special_characters_search() {
-        let query = r"\b\w+\b\."; // Match words followed by a period, ensuring word boundaries
-        let expected = vec!["safe, fast, productive."];
-        let results = search_regex_parallel(query, CONTENTS);
-        assert_eq!(expected, results);
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from(r" \b\w+\b\!"),
+            ignore_case: false,
+            use_regex: true,
+        };
+
+        assert_eq!(
+            vec![
+                "I'm nobody! Who are you?",
+                "Then there's a pair of us - don't tell!",
+                "How dreary to be somebody!",
+                "To an admiring bog!"
+            ],
+            grep(args).unwrap()
+        );
     }
 
     // Test for case insensitive regex search
     #[test]
     fn regex_case_insensitive_search() {
-        let query = r"(?i)rust"; // Matches "Trust" and Rust
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from(r"^to"),
+            ignore_case: true,
+            use_regex: true,
+        };
+
         assert_eq!(
-            vec!["Rust:", "Trust me"],
-            search_regex_case_insensitive_parallel(query, CONTENTS)
+            vec!["To tell your name the livelong day", "To an admiring bog!"],
+            grep(args).unwrap()
         );
     }
 
     // Test regex with no matches
     #[test]
     fn regex_no_match_search() {
-        let query = r"nonexistent"; // Should match nothing
-        let results = search_regex_parallel(query, CONTENTS);
-        assert!(results.is_empty());
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from(r"Does not exist"),
+            ignore_case: true,
+            use_regex: true,
+        };
+        assert!(grep(args).unwrap().is_empty());
     }
 
     // Test for matching at the start and end of the text
     #[test]
     fn regex_edge_cases_search() {
-        let query = r"^Rust:|me$"; // Matches "Rust:" at the start and "secure." at the end
-        let expected = vec!["Rust:", "Trust me"]; // Ensure this is what you expect based on regex.
-        let results = search_regex_parallel(query, CONTENTS);
-        assert_eq!(expected, results);
+        let args = Args {
+            file_path: String::from("poem.txt"),
+            query: String::from(r"^Are.*too\?$"),
+            ignore_case: true,
+            use_regex: true,
+        };
+
+        assert_eq!(vec!["Are you nobody, too?"], grep(args).unwrap());
     }
 }
