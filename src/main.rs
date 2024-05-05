@@ -1,11 +1,30 @@
-use std::env;
+pub mod grep;
+
+use argh::FromArgs;
+use grep::grep;
+use std::process;
+
+#[derive(FromArgs)]
+#[argh(description = "Fast grep")]
+pub struct Args {
+    #[argh(positional)]
+    pub query: String,
+
+    #[argh(positional)]
+    pub file_path: String,
+
+    #[argh(switch, short = 'i', long = "ignore-case", description = "ignore case")]
+    pub ignore_case: bool,
+
+    #[argh(switch, short = 'r', long = "use-regex", description = "use regex")]
+    pub use_regex: bool,
+}
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Args = argh::from_env();
 
-    let query = &args[1];
-    let file_path = &args[2];
-
-    println!("Searching for {query}");
-    println!("in file {file_path}");
+    if let Err(e) = grep(args) {
+        eprintln!("Application error: {e}");
+        process::exit(1);
+    }
 }
