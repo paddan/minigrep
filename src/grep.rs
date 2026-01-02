@@ -118,11 +118,11 @@ where
         pos += chunk_size;
     }
 
-    // Process chunks in parallel
+    // Process chunks in parallel using flat_map_iter to avoid per-chunk Vec allocation
     chunk_starts
         .par_iter()
         .enumerate()
-        .flat_map(|(i, &start)| {
+        .flat_map_iter(|(i, &start)| {
             let end = if i + 1 < chunk_starts.len() {
                 chunk_starts[i + 1]
             } else {
@@ -132,7 +132,6 @@ where
             chunk
                 .split(|&b| b == b'\n')
                 .filter(|line| matcher(line))
-                .collect::<Vec<_>>()
         })
         .collect()
 }
