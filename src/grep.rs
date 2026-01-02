@@ -17,13 +17,13 @@ const MAX_CHUNK_SIZE: usize = 256 * 1024;
 /// Calculate optimal chunk size based on file size and thread count
 fn optimal_chunk_size(file_size: usize) -> usize {
     let num_threads = rayon::current_num_threads();
-    
+
     // Target: 2-4 chunks per thread for good load balancing
     let chunks_per_thread = 3;
     let target_chunks = num_threads * chunks_per_thread;
-    
+
     let chunk_size = file_size / target_chunks;
-    
+
     // Clamp between min and max
     chunk_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
 }
@@ -37,6 +37,9 @@ fn optimal_chunk_size(file_size: usize) -> usize {
 ///
 /// Results are streamed directly to stdout, avoiding allocation of a result vector.
 pub fn grep(args: Args) -> Result<(), Box<dyn Error>> {
+    if std::fs::symlink_metadata(&args.file_path)?.file_type().is_symlink() {
+        return Err("Symlinks not allowed".into());
+    }
     let file = File::open(&args.file_path)?;
     let mmap = unsafe { MmapOptions::new().map(&file)? };
     let content: &[u8] = &mmap;
@@ -87,7 +90,7 @@ where
     F: Fn(&[u8]) -> bool + Sync,
 {
     let file_size = contents.len();
-    
+
     // For small files, use simple parallel line iteration
     if file_size < MIN_CHUNK_SIZE * 2 {
         return contents
