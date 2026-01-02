@@ -23,15 +23,8 @@ pub struct Args {
 fn main() {
     let args: Args = argh::from_env();
 
-    match grep(args) {
-        Ok(lines) => {
-            for line in lines {
-                println!("{line}")
-            }
-        }
-        Err(e) => {
-            eprintln!("Application error: {e}");
-            process::exit(1);
-        }
+    if let Err(e) = grep(args) {
+        eprintln!("Application error: {e}");
+        process::exit(1);
     }
 }
