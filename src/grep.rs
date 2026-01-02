@@ -27,6 +27,8 @@ pub fn grep(args: Args) -> Result<(), Box<dyn Error>> {
     if args.use_regex {
         let regex = RegexBuilder::new(&args.query)
             .case_insensitive(args.ignore_case)
+            .size_limit(10 * (1 << 20))  // 10MB compiled size limit
+            .dfa_size_limit(10 * (1 << 20))
             .build()?;
         search_regex_parallel(&regex, content);
     } else if args.ignore_case {
@@ -119,8 +121,9 @@ fn write_matches(matches: Vec<&[u8]>) {
     let stdout = io::stdout().lock();
     let mut writer = BufWriter::with_capacity(64 * 1024, stdout);
     for line in matches {
-        let _ = writer.write_all(line);
-        let _ = writer.write_all(b"\n");
+        if writer.write_all(line).is_err() || writer.write_all(b"\n").is_err() {
+            break; // Stop on broken pipe or other write errors
+        }
     }
 }
 
