@@ -7,8 +7,8 @@
 set -e
 
 # Configuration
-RUNS=20
-WARMUP_RUNS=5
+RUNS=10
+WARMUP_RUNS=3
 TEST_FILE="${1:-weather_stations.csv}"
 
 # Check dependencies

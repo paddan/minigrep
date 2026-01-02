@@ -85,7 +85,7 @@ fn search_regex_parallel(regex: &regex::bytes::Regex, contents: &[u8]) {
 }
 
 /// Parallel search with chunked processing for better cache locality
-fn search_chunks_parallel<'a, F>(contents: &'a [u8], matcher: F) -> Vec<&'a [u8]>
+fn search_chunks_parallel<F>(contents: &[u8], matcher: F) -> Vec<&[u8]>
 where
     F: Fn(&[u8]) -> bool + Sync,
 {
