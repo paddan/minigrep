@@ -8,8 +8,25 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
-/// Minimum chunk size for parallel processing (64KB)
+/// Minimum chunk size (64KB) - ensures enough work per thread
 const MIN_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Maximum chunk size (256KB) - fits comfortably in L2 cache
+const MAX_CHUNK_SIZE: usize = 256 * 1024;
+
+/// Calculate optimal chunk size based on file size and thread count
+fn optimal_chunk_size(file_size: usize) -> usize {
+    let num_threads = rayon::current_num_threads();
+    
+    // Target: 2-4 chunks per thread for good load balancing
+    let chunks_per_thread = 3;
+    let target_chunks = num_threads * chunks_per_thread;
+    
+    let chunk_size = file_size / target_chunks;
+    
+    // Clamp between min and max
+    chunk_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
+}
 
 /// Performs a grep-like search on the contents of a file, using the specified search options.
 ///
@@ -69,17 +86,18 @@ fn search_chunks_parallel<'a, F>(contents: &'a [u8], matcher: F) -> Vec<&'a [u8]
 where
     F: Fn(&[u8]) -> bool + Sync,
 {
+    let file_size = contents.len();
+    
     // For small files, use simple parallel line iteration
-    if contents.len() < MIN_CHUNK_SIZE * 2 {
+    if file_size < MIN_CHUNK_SIZE * 2 {
         return contents
             .par_split(|&b| b == b'\n')
             .filter(|line| matcher(line))
             .collect();
     }
 
-    // For larger files, split into chunks first for better cache locality
-    let num_threads = rayon::current_num_threads();
-    let chunk_size = (contents.len() / num_threads).max(MIN_CHUNK_SIZE);
+    // For larger files, split into chunks for better cache locality
+    let chunk_size = optimal_chunk_size(file_size);
 
     // Find chunk boundaries at newlines
     let mut chunk_starts = vec![0usize];

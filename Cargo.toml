@@ -13,9 +13,4 @@ argh = "0.1.12"
 aho-corasick = "1.1.3"
 memchr = "2.7"
 
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bench]]
-name = "grep_benchmark"
-harness = false
