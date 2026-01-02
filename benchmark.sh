@@ -156,35 +156,35 @@ EOF
 
     run_test "Exact: \`Tokyo\`" \
         "./target/release/minigrep 'Tokyo' '$TEST_FILE'" \
-        "rg -N 'Tokyo' '$TEST_FILE'"
+        "rg -N --color never 'Tokyo' '$TEST_FILE'"
 
     run_test "Exact (rare): \`Reykjavik\`" \
         "./target/release/minigrep 'Reykjavik' '$TEST_FILE'" \
-        "rg -N 'Reykjavik' '$TEST_FILE'"
+        "rg -N --color never 'Reykjavik' '$TEST_FILE'"
 
     run_test "Exact (no match): \`ZZZZZ\`" \
         "./target/release/minigrep 'ZZZZZ' '$TEST_FILE'" \
-        "rg -N 'ZZZZZ' '$TEST_FILE'"
+        "rg -N --color never 'ZZZZZ' '$TEST_FILE'"
 
     run_test "Case-insensitive: \`san\`" \
         "./target/release/minigrep -i 'san' '$TEST_FILE'" \
-        "rg -Ni 'san' '$TEST_FILE'"
+        "rg -Ni --color never 'san' '$TEST_FILE'"
 
     run_test "Case-insensitive: \`tokyo\`" \
         "./target/release/minigrep -i 'tokyo' '$TEST_FILE'" \
-        "rg -Ni 'tokyo' '$TEST_FILE'"
+        "rg -Ni --color never 'tokyo' '$TEST_FILE'"
 
     run_test "Regex: \`^[A-Z][a-z]+;\`" \
         "./target/release/minigrep -r '^[A-Z][a-z]+;' '$TEST_FILE'" \
-        "rg -N '^[A-Z][a-z]+;' '$TEST_FILE'"
+        "rg -N --color never '^[A-Z][a-z]+;' '$TEST_FILE'"
 
     run_test "Regex: \`;-?[0-9]+\\.\`" \
         "./target/release/minigrep -r ';-?[0-9]+\\.' '$TEST_FILE'" \
-        "rg -N ';-?[0-9]+\\.' '$TEST_FILE'"
+        "rg -N --color never ';-?[0-9]+\\.' '$TEST_FILE'"
 
     run_test "Regex (case-insensitive): \`^[a-z]\`" \
         "./target/release/minigrep -ri '^[a-z]' '$TEST_FILE'" \
-        "rg -Ni '^[a-z]' '$TEST_FILE'"
+        "rg -Ni --color never '^[a-z]' '$TEST_FILE'"
 
     # Large file test
     echo "" >&2
