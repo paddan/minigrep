@@ -11,6 +11,13 @@ RUNS=10
 WARMUP_RUNS=3
 TEST_FILE="${1:-weather_stations.csv}"
 
+# ripgrep defaults to -j0 (heuristic thread count), which for a single-file
+# search stays at 1 thread regardless of core count — rg only parallelizes
+# across files in a directory walk, not within one file. We pass -j explicitly
+# so the comparison isn't accidentally handicapping rg on a technicality, even
+# though it measurably makes no difference for single-file input.
+THREADS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+
 # Check dependencies
 check_deps() {
     if ! command -v rg &> /dev/null; then
@@ -41,9 +48,9 @@ benchmark() {
 
     # Timed runs
     for ((i=1; i<=RUNS; i++)); do
-        local start=$(perl -MTime::HiRes=time -e 'printf "%.6f\n", time')
+        local start=$(python3 -c 'import time; print(f"{time.time():.6f}")')
         eval "$cmd" > /dev/null 2>&1
-        local end=$(perl -MTime::HiRes=time -e 'printf "%.6f\n", time')
+        local end=$(python3 -c 'import time; print(f"{time.time():.6f}")')
         local elapsed=$(echo "$end - $start" | bc)
         times+=("$elapsed")
     done
@@ -66,21 +73,32 @@ TIE_THRESHOLD_PCT=2.0
 # trap (registered in main) can still see it after main has returned.
 REPORT_FILE=""
 
-# Format result and return winner text
+# Format result and return winner text.
+# Args: label1 time1 label2 time2 (exactly two engines).
+# Picks the fastest engine and reports its margin over the other; if that
+# margin is within the tie band it's reported as a tie.
 get_winner() {
-    local minigrep_ms="$1"
-    local ripgrep_ms="$2"
+    local label1="$1" time1="$2" label2="$3" time2="$4"
 
-    # Compute signed diff: positive => mg faster, negative => ripgrep faster.
-    local raw=$(echo "scale=3; (($ripgrep_ms - $minigrep_ms) / $ripgrep_ms) * 100" | bc)
-    local abs=${raw#-}
-
-    if (( $(echo "$abs < $TIE_THRESHOLD_PCT" | bc -l) )); then
-        echo "≈ tie"
-    elif (( $(echo "$raw > 0" | bc -l) )); then
-        echo "**mg** +$(printf "%.1f" "$raw")%"
+    local first second winner_label
+    if (( $(echo "$time1 <= $time2" | bc -l) )); then
+        first="$time1"; second="$time2"; winner_label="$label1"
     else
-        echo "**ripgrep** +$(printf "%.1f" "$abs")%"
+        first="$time2"; second="$time1"; winner_label="$label2"
+    fi
+
+    # Margin of the winner over the other, as a percentage of the other —
+    # used only to decide the tie band, since percentage compresses toward
+    # 100% and hides the true gap on large speedups.
+    local pct=$(echo "scale=3; (($second - $first) / $second) * 100" | bc)
+
+    if (( $(echo "$pct < $TIE_THRESHOLD_PCT" | bc -l) )); then
+        echo "≈ tie"
+    else
+        # Reported as a multiplier (times faster), which scales sensibly
+        # whether the gap is 1.15x or 200x.
+        local ratio=$(echo "scale=2; $second / $first" | bc)
+        echo "**${winner_label}** ${ratio}x"
     fi
 }
 
@@ -91,7 +109,7 @@ verify_results() {
     local rg_args="$3"
 
     local mg_count=$(./target/release/mg $mg_args "$query" "$TEST_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    local rg_count=$(rg $rg_args "$query" "$TEST_FILE" 2>/dev/null | wc -l | tr -d ' ')
+    local rg_count=$(rg -j "$THREADS" $rg_args "$query" "$TEST_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ "$mg_count" != "$rg_count" ]]; then
         echo "> ⚠️ Match count mismatch for '$query': mg=$mg_count, ripgrep=$rg_count" >&2
@@ -119,7 +137,8 @@ print_header() {
         "$(printf -- '-%.0s' $(seq 1 $((COL_WINNER+2))))"
 }
 
-# Run a single benchmark test and output markdown row
+# Run a single benchmark test and output markdown row.
+# Args: name minigrep_cmd ripgrep_cmd
 run_test() {
     local name="$1"
     local minigrep_cmd="$2"
@@ -129,16 +148,71 @@ run_test() {
 
     local mg_time=$(benchmark "$minigrep_cmd")
     local rg_time=$(benchmark "$ripgrep_cmd")
-    local winner=$(get_winner "$mg_time" "$rg_time")
-
     local mg_fmt="$(printf "%.2f" "$mg_time")ms"
     local rg_fmt="$(printf "%.2f" "$rg_time")ms"
+
+    local winner=$(get_winner mg "$mg_time" ripgrep "$rg_time")
 
     printf "| %-*s | %*s | %*s | %-*s |\n" \
         "$COL_TEST" "$name" \
         "$COL_TIME" "$mg_fmt" \
         "$COL_TIME" "$rg_fmt" \
         "$COL_WINNER" "$winner"
+}
+
+# Run the full test suite (exact, case-insensitive, regex) against a given file.
+# Same tests are used for both the standard and large files so results are comparable.
+run_test_suite() {
+    local file="$1"
+
+    # Exact match tests
+    run_test "Exact: \`San\`" \
+        "./target/release/mg 'San' '$file'" \
+        "rg -N -j "$THREADS" --color never 'San' '$file'"
+
+    run_test "Exact: \`Tokyo\`" \
+        "./target/release/mg 'Tokyo' '$file'" \
+        "rg -N -j "$THREADS" --color never 'Tokyo' '$file'"
+
+    run_test "Exact (rare): \`Reykjavik\`" \
+        "./target/release/mg 'Reykjavik' '$file'" \
+        "rg -N -j "$THREADS" --color never 'Reykjavik' '$file'"
+
+    run_test "Exact (no match): \`ZZZZZ\`" \
+        "./target/release/mg 'ZZZZZ' '$file'" \
+        "rg -N -j "$THREADS" --color never 'ZZZZZ' '$file'"
+
+    run_test "Case-insensitive: \`san\`" \
+        "./target/release/mg -i 'san' '$file'" \
+        "rg -Ni -j "$THREADS" --color never 'san' '$file'"
+
+    run_test "Case-insensitive: \`tokyo\`" \
+        "./target/release/mg -i 'tokyo' '$file'" \
+        "rg -Ni -j "$THREADS" --color never 'tokyo' '$file'"
+
+    run_test "Regex: \`^[A-Z][a-z]+;\`" \
+        "./target/release/mg -r '^[A-Z][a-z]+;' '$file'" \
+        "rg -N -j "$THREADS" --color never '^[A-Z][a-z]+;' '$file'"
+
+    run_test "Regex: \`;-?[0-9]+\\.\`" \
+        "./target/release/mg -r ';-?[0-9]+\\.' '$file'" \
+        "rg -N -j "$THREADS" --color never ';-?[0-9]+\\.' '$file'"
+
+    run_test "Regex (alternation): \`^(San\\|New\\|Los) \`" \
+        "./target/release/mg -r '^(San|New|Los) ' '$file'" \
+        "rg -N -j "$THREADS" --color never '^(San|New|Los) ' '$file'"
+
+    run_test "Regex (hyphenated names)" \
+        "./target/release/mg -r '[A-Z][a-z]+-[A-Z][a-z]+;' '$file'" \
+        "rg -N -j "$THREADS" --color never '[A-Z][a-z]+-[A-Z][a-z]+;' '$file'"
+
+    run_test "Regex (bounded quantifier + anchor)" \
+        "./target/release/mg -r ';-?[0-9]{1,2}\\.[0-9]{4}\$' '$file'" \
+        "rg -N -j "$THREADS" --color never ';-?[0-9]{1,2}\\.[0-9]{4}\$' '$file'"
+
+    run_test "Regex (case-insensitive): \`^[a-z]\`" \
+        "./target/release/mg -ri '^[a-z]' '$file'" \
+        "rg -Ni -j "$THREADS" --color never '^[a-z]' '$file'"
 }
 
 main() {
@@ -184,49 +258,14 @@ main() {
 | Lines     | $lines_fmt |
 | Runs      | $RUNS (+ $WARMUP_RUNS warmup) |
 | ripgrep   | $rg_version |
+| Threads   | $THREADS (rg -j; single-file search stays 1-threaded regardless) |
 | Tie band  | ±${TIE_THRESHOLD_PCT}% (treated as noise) |
 
 ## Results: Standard File ($file_size)
 
 EOF
     print_header
-
-    # Exact match tests
-    run_test "Exact: \`San\`" \
-        "./target/release/mg 'San' '$TEST_FILE'" \
-        "rg -N 'San' '$TEST_FILE'"
-
-    run_test "Exact: \`Tokyo\`" \
-        "./target/release/mg 'Tokyo' '$TEST_FILE'" \
-        "rg -N --color never 'Tokyo' '$TEST_FILE'"
-
-    run_test "Exact (rare): \`Reykjavik\`" \
-        "./target/release/mg 'Reykjavik' '$TEST_FILE'" \
-        "rg -N --color never 'Reykjavik' '$TEST_FILE'"
-
-    run_test "Exact (no match): \`ZZZZZ\`" \
-        "./target/release/mg 'ZZZZZ' '$TEST_FILE'" \
-        "rg -N --color never 'ZZZZZ' '$TEST_FILE'"
-
-    run_test "Case-insensitive: \`san\`" \
-        "./target/release/mg -i 'san' '$TEST_FILE'" \
-        "rg -Ni --color never 'san' '$TEST_FILE'"
-
-    run_test "Case-insensitive: \`tokyo\`" \
-        "./target/release/mg -i 'tokyo' '$TEST_FILE'" \
-        "rg -Ni --color never 'tokyo' '$TEST_FILE'"
-
-    run_test "Regex: \`^[A-Z][a-z]+;\`" \
-        "./target/release/mg -r '^[A-Z][a-z]+;' '$TEST_FILE'" \
-        "rg -N --color never '^[A-Z][a-z]+;' '$TEST_FILE'"
-
-    run_test "Regex: \`;-?[0-9]+\\.\`" \
-        "./target/release/mg -r ';-?[0-9]+\\.' '$TEST_FILE'" \
-        "rg -N --color never ';-?[0-9]+\\.' '$TEST_FILE'"
-
-    run_test "Regex (case-insensitive): \`^[a-z]\`" \
-        "./target/release/mg -ri '^[a-z]' '$TEST_FILE'" \
-        "rg -Ni --color never '^[a-z]' '$TEST_FILE'"
+    run_test_suite "$TEST_FILE"
 
     # Large file test
     echo "" >&2
@@ -244,18 +283,7 @@ EOF
 
 EOF
     print_header
-
-    run_test "Exact: \`San\`" \
-        "./target/release/mg 'San' '$large_file'" \
-        "rg -N 'San' '$large_file'"
-
-    run_test "Case-insensitive: \`san\`" \
-        "./target/release/mg -i 'san' '$large_file'" \
-        "rg -Ni 'san' '$large_file'"
-
-    run_test "Regex: \`^[A-Z]\`" \
-        "./target/release/mg -r '^[A-Z]' '$large_file'" \
-        "rg -N '^[A-Z]' '$large_file'"
+    run_test_suite "$large_file"
 
     # Cleanup
     rm -f "$large_file"
